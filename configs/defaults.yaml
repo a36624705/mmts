@@ -1,0 +1,104 @@
+# configs/defaults.yaml
+# 单文件汇总：模型、数据、训练、评估、图像化(imgify)
+
+paths:
+  outputs_root: outputs   # 训练/评估产物根目录（lora、processor、logs、figures、checkpoints）
+
+model:
+  base_id: Qwen/Qwen2.5-VL-3B-Instruct
+  dtype: bfloat16
+  device: auto            # 交给 HF 自动分配（GPU/CPU）
+
+lora:
+  r: 16
+  alpha: 32
+  dropout: 0.05
+  bias: none
+  target_modules:
+    - self_attn.q_proj
+    - self_attn.k_proj
+    - self_attn.v_proj
+    - self_attn.o_proj
+    - mlp.gate_proj
+    - mlp.up_proj
+    - mlp.down_proj
+  modules_to_save:
+    - lm_head
+
+data:
+  name: FD001
+  # 训练/评估阶段读取图像数据的路径（可直接指向 renderer 上层，CLI 会自动拼接 /<renderer>）
+  train_dir: data/images/FD001/train
+  test_dir:  data/images/FD001/test
+  renderer:  grayscale
+  image_glob: sample_*.png
+  label_filename: y.npy
+  image_size: 448
+  seed: 42
+  train_ratio: 0.8     # 如果使用 data_root 单目录切分时生效
+
+  # imgify 图像化配置（供 mmts.cli.imgify 使用）
+  imgify:
+    # 渲染公共参数（train/test 共享）
+    orientation: row-major        # row-major: (T,F) -> T 为纵轴、F 为横轴；col-major 反之
+    flip_vertical: false
+    flip_horizontal: false
+    scale_mode: percentile        # global / percentile / sample
+    pmin: 1
+    pmax: 99
+
+    # 训练集图像化（留空则不处理）
+    train:
+      x_npy: data/ts/X_train_FD001.npy
+      y_npy: data/ts/y_train_FD001.npy
+      out_dir: data/images/FD001/train
+      max_samples: null           # 例如 300；null = 全量
+
+    # 测试集图像化（留空则不处理）
+    test:
+      x_npy: data/ts/X_test_FD001.npy
+      y_npy: data/ts/y_test_FD001.npy
+      out_dir: data/images/FD001/test
+      max_samples: null
+
+train:
+  epochs: 10
+  batch_size: 1
+  grad_accum: 8
+  lr: 2e-4
+  weight_decay: 0.01
+  warmup_ratio: 0.05
+  scheduler: cosine
+  logging_steps: 10
+  save_strategy: epoch
+  bf16: true
+  fp16: false
+  grad_ckpt: true
+  allow_tf32: true
+
+eval:
+  # 生成超参
+  max_new_tokens: 32
+  do_sample: false
+  num_beams: 1
+
+  # RUL 合法区间（解析与裁剪）
+  rul_low: 0.0
+  rul_high: 150.0
+
+  # 图像编码尺寸（和 data.image_size 保持一致即可）
+  image_size: 448
+
+  # 可选：手动指定训练产生的目录；不指定时 eval.sh 会自动发现 outputs 下的最新目录
+  # lora_dir:
+  # processor_dir:
+
+  metrics:
+    - rmse
+    - mae
+    - r2
+    - valid_ratio
+
+prompts:
+  # 可选：规则文件（不指定则使用 CLI 内置默认 rules）
+  rules_file: src/mmts/prompts/base_rules.txt

@@ -1,0 +1,44 @@
+# =========================
+# Python
+# =========================
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.pkl
+*.so
+*.egg
+*.egg-info/
+*.log
+*.out
+*.err
+build/
+dist/
+.venv/
+venv/
+env/
+ENV/
+.idea/
+.vscode/
+.ipynb_checkpoints/
+.mypy_cache/
+pytest_cache/
+.DS_Store
+
+
+# =========================
+# Outputs / Checkpoints
+# =========================
+outputs/
+logs/
+
+# =========================
+# Data / 数据集
+# =========================
+data/
+
+
+# =========================
+# 临时文件
+# =========================
+tmp/

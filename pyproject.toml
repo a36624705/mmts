@@ -1,0 +1,69 @@
+[tool.poetry]
+name = "mmts"
+version = "0.1.0"
+description = "MMTS — 多模态时序/数值 JSON 微调最小框架（VL + LoRA + JSON 输出）"
+authors = ["天月 星辰 <a36624705@gmail.com>"]
+readme = "README.md"
+license = "MIT"
+packages = [{ include = "mmts", from = "src" }]
+keywords = ["multimodal", "vision-language", "lora", "fine-tuning", "regression", "time-series", "qwen"]
+classifiers = [
+  "Programming Language :: Python :: 3",
+  "License :: OSI Approved :: MIT License",
+  "Operating System :: OS Independent"
+]
+
+[tool.poetry.dependencies]
+python = ">=3.10,<3.13"
+
+# ---- 核心运行依赖（与代码实现匹配）----
+transformers = "^4.43.0"   # 或更高，兼容 AutoProcessor / VL
+datasets = "^2.20.0"
+peft = "^0.11.0"
+pillow = "^10.4.0"
+matplotlib = "^3.8.0"
+numpy = "^1.26.0"
+tqdm = "^4.66.0"
+
+# 说明：Torch 通常需要按 CUDA 版本单独安装，避免 Poetry 锁定 CPU 轮子。
+# 建议在环境中手动安装，例如：
+#   pip install --index-url https://download.pytorch.org/whl/cu121 torch torchvision
+# 如需用 Poetry 统一声明，可取消下一行注释并按需设定版本：
+# torch = { version = "^2.3.0", optional = true }
+
+# 可选：sklearn 仅在你需要额外指标/工具时
+scikit-learn = { version = "^1.3.0", optional = true }
+
+[tool.poetry.extras]
+sklearn = ["scikit-learn"]
+# torch = ["torch"]  # 如果你上面把 torch 标记为 optional，可通过 extras 开启
+
+[tool.poetry.scripts]
+mmts-train = "mmts.cli.train:main"
+mmts-eval  = "mmts.cli.eval:main"
+
+[tool.poetry.group.dev.dependencies]
+black = "^24.3.0"
+ruff = "^0.5.0"
+isort = "^5.13.2"
+pytest = "^8.1.0"
+
+[tool.black]
+line-length = 100
+target-version = ["py310"]
+skip-string-normalization = true
+
+[tool.isort]
+profile = "black"
+line_length = 100
+src_paths = ["src"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+select = ["E", "F", "I"]
+exclude = ["build", "dist", ".venv", "venv"]
+
+[build-system]
+requires = ["poetry-core>=1.8.0"]
+build-backend = "poetry.core.masonry.api"
