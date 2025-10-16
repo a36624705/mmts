@@ -1,19 +1,14 @@
-# configs/defaults.yaml
-# 单文件汇总：模型、数据、训练、评估、图像化(imgify)
-
 paths:
   outputs_root: outputs   # 训练/评估产物根目录（lora、processor、logs、figures、checkpoints）
 
 model:
   base_id: Qwen/Qwen2.5-VL-3B-Instruct
-  dtype: bfloat16
-  device: auto            # 交给 HF 自动分配（GPU/CPU）
 
 lora:
   r: 16
   alpha: 32
   dropout: 0.05
-  bias: none
+  bias: "none"
   target_modules:
     - self_attn.q_proj
     - self_attn.k_proj
@@ -47,22 +42,22 @@ data:
     pmin: 1
     pmax: 99
 
-    # 训练集图像化（留空则不处理）
+    # 训练集图像化
     train:
       x_npy: data/ts/X_train_FD001.npy
       y_npy: data/ts/y_train_FD001.npy
       out_dir: data/images/FD001/train
-      max_samples: null           # 例如 300；null = 全量
+      max_samples: 100
 
-    # 测试集图像化（留空则不处理）
+    # 测试集图像化
     test:
       x_npy: data/ts/X_test_FD001.npy
       y_npy: data/ts/y_test_FD001.npy
       out_dir: data/images/FD001/test
-      max_samples: null
+      max_samples: 10
 
 train:
-  epochs: 10
+  epochs: 3
   batch_size: 1
   grad_accum: 8
   lr: 2e-4
@@ -77,6 +72,9 @@ train:
   allow_tf32: true
 
 eval:
+  lora_dir: null
+  processor_dir: null
+  
   # 生成超参
   max_new_tokens: 32
   do_sample: false
@@ -86,12 +84,8 @@ eval:
   rul_low: 0.0
   rul_high: 150.0
 
-  # 图像编码尺寸（和 data.image_size 保持一致即可）
-  image_size: 448
-
-  # 可选：手动指定训练产生的目录；不指定时 eval.sh 会自动发现 outputs 下的最新目录
-  # lora_dir:
-  # processor_dir:
+  # 图像编码尺寸（与 data.image_size 保持一致）
+  image_size: ${data.image_size}
 
   metrics:
     - rmse
@@ -100,5 +94,4 @@ eval:
     - valid_ratio
 
 prompts:
-  # 可选：规则文件（不指定则使用 CLI 内置默认 rules）
   rules_file: src/mmts/prompts/base_rules.txt

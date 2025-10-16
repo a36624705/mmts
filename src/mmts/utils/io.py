@@ -1,18 +1,10 @@
 # src/mmts/utils/io.py
 # -*- coding: utf-8 -*-
 """
-I/O 与路径工具：
-- 统一管理 outputs 目录结构（checkpoints/、figures/、logs/、lora/）
-- 生成 run_name（基于时间戳或自定义前缀）
-- 保存/加载 HuggingFace 的 Processor
-- 保存 LoRA 适配器（PEFT 模型）
-- 保存 Matplotlib 图像到文件（自动创建父目录）
-- 简易的文本/JSON 文件保存工具
-
-设计目标：
-- 最小依赖、与上层训练逻辑解耦；
-- 任何函数仅做路径与文件层面的职责，不引入训练/评估细节；
-- 尽可能避免硬编码：默认使用 outputs/，也允许调用方传入自定义基路径。
+I/O 与路径工具（仅做文件与目录层面的职责）：
+- 输出目录结构与 run 名生成
+- Processor/LoRA 适配器的保存与加载
+- Matplotlib 图像与文本/JSON 的读写
 """
 
 from __future__ import annotations
@@ -21,38 +13,30 @@ import json
 import datetime as _dt
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, Optional, Protocol, runtime_checkable
 
+# transformers 为可选依赖，仅在需要时使用
 try:
-    # transformers 不是强依赖；仅在需要保存/加载 Processor 时才用到
-    from transformers import AutoProcessor, ProcessorMixin
+    from transformers import AutoProcessor  # type: ignore
 except Exception:  # pragma: no cover
     AutoProcessor = None  # type: ignore
-    ProcessorMixin = object  # 兜底，避免类型检查报错
 
 
-# =========================
+# -------------------------
 # 目录结构与常量
-# =========================
+# -------------------------
 
-DEFAULT_OUTPUT_ROOT = Path("outputs")  # 顶层输出目录（与 .gitignore 配套忽略）
-SUBDIR_CHECKPOINTS = "checkpoints"     # 训练权重与 Trainer 状态
-SUBDIR_FIGURES = "figures"             # 评估/可视化图像
-SUBDIR_LOGS = "logs"                   # 文本日志
-SUBDIR_LORA = "lora"                   # LoRA 适配器权重
-SUBDIR_PROCESSOR = "processor"         # Processor 序列化目录（可与 lora 并列）
+DEFAULT_OUTPUT_ROOT = Path("outputs")
+SUBDIR_CHECKPOINTS = "checkpoints"
+SUBDIR_FIGURES = "figures"
+SUBDIR_LOGS = "logs"
+SUBDIR_LORA = "lora"
+SUBDIR_PROCESSOR = "processor"
 
 
 @dataclass(frozen=True)
 class OutputPaths:
-    """
-    一个简单的数据类，用于集中管理当前 run 使用到的输出路径。
-    说明：
-    - root: 顶层 outputs 目录
-    - checkpoints/figures/logs/lora/processor: 各子目录的具体 Path
-    - run_dir: 针对某次运行的“会话目录”，常用于聚合该次训练的产物
-               （如果不需要分 run 目录，可不使用该字段）
-    """
+    """集中管理一次运行使用到的输出路径。"""
     root: Path
     checkpoints: Path
     figures: Path
@@ -62,33 +46,22 @@ class OutputPaths:
     run_dir: Optional[Path] = None
 
 
-# =========================
+# -------------------------
 # 基础工具
-# =========================
+# -------------------------
 
 def ensure_dir(p: Path) -> Path:
-    """
-    确保目录存在；若不存在则递归创建。
-    返回创建/存在的目录 Path，便于链式调用。
-    """
+    """确保目录存在并返回该路径。"""
     p.mkdir(parents=True, exist_ok=True)
     return p
 
 
-def build_output_paths(root: Path | str = DEFAULT_OUTPUT_ROOT,
-                       with_run: bool = False,
-                       run_name: Optional[str] = None) -> OutputPaths:
-    """
-    构建并（可选）创建标准输出目录结构。
-
-    参数：
-    - root: 顶层输出根目录（默认 'outputs'）
-    - with_run: 是否额外创建一个 run 专属子目录（常用于一次训练会话）
-    - run_name: run 子目录的名称；当 with_run=True 且未提供时，会自动生成时间戳名称
-
-    返回：
-    - OutputPaths 数据类实例，其中包含各子目录 Path。
-    """
+def build_output_paths(
+    root: Path | str = DEFAULT_OUTPUT_ROOT,
+    with_run: bool = False,
+    run_name: Optional[str] = None,
+) -> OutputPaths:
+    """构建标准输出目录结构，可选创建 run 子目录。"""
     root = Path(root)
     ensure_dir(root)
 
@@ -114,131 +87,99 @@ def build_output_paths(root: Path | str = DEFAULT_OUTPUT_ROOT,
 
 
 def _auto_run_name(hint: Optional[str] = None) -> str:
-    """
-    生成一个 run 名称：
-    - 当提供 hint 时，以 hint 为前缀；
-    - 统一追加时间戳（到秒），避免名称冲突。
-
-    示例：
-    - hint=None  -> 'run_2025-10-13_21-30-05'
-    - hint='fd001' -> 'fd001_2025-10-13_21-30-05'
-    """
+    """生成带时间戳的 run 名称；可选使用 hint 作为前缀。"""
     ts = _dt.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
     prefix = "run" if not hint else str(hint).strip()
     return f"{prefix}_{ts}"
 
 
 def gen_run_name(prefix: str = "run") -> str:
-    """
-    对外暴露的 run 名称生成函数（语义化包装）。
-    训练脚本可在记录日志/保存配置时使用该名称作为会话标识。
-    """
+    """对外暴露的 run 名生成函数。"""
     return _auto_run_name(prefix)
 
 
-# =========================
-# 序列化工具：Processor / LoRA
-# =========================
+# -------------------------
+# 序列化：Processor / LoRA
+# -------------------------
 
-def save_processor(processor: "ProcessorMixin",
-                   out_dir: Path | str) -> Path:
-    """
-    保存 HuggingFace Processor 到指定目录。
-    - processor: 任何继承自 ProcessorMixin 的处理器（AutoProcessor 等）
-    - out_dir: 保存目录路径（会自动创建）
+@runtime_checkable
+class _SavePretrainedLike(Protocol):
+    def save_pretrained(self, *args, **kwargs) -> Any: ...
 
-    返回：
-    - 实际保存的目录 Path
-    """
+
+def save_processor(processor: _SavePretrainedLike, out_dir: Path | str) -> Path:
+    """保存 HuggingFace Processor 到目录。"""
     out_dir = Path(out_dir)
     ensure_dir(out_dir)
     if not hasattr(processor, "save_pretrained"):
-        raise TypeError("传入的 processor 不支持 save_pretrained 方法。")
+        raise TypeError("传入对象不支持 save_pretrained。")
     processor.save_pretrained(str(out_dir))
     return out_dir
 
 
-def load_processor(from_dir: Path | str) -> "ProcessorMixin":
-    """
-    从目录加载 Processor。
-    要求：transformers 已安装，并且目录内存在 config/processor 相关文件。
-    """
+def load_processor(from_dir: Path | str):
+    """从目录加载 Processor（需要 transformers）。"""
     if AutoProcessor is None:
-        raise ImportError("需要 transformers 才能加载 AutoProcessor。")
+        raise ImportError("需要安装 transformers 才能加载 AutoProcessor。")
     from_dir = Path(from_dir)
     if not from_dir.exists():
         raise FileNotFoundError(f"Processor 目录不存在：{from_dir}")
     return AutoProcessor.from_pretrained(str(from_dir), trust_remote_code=True)
 
 
-def save_lora_adapter(model: Any, out_dir: Path | str) -> Path:
-    """
-    保存 LoRA 适配器权重（PEFT 模型）。
-    要求：model 对象拥有 save_pretrained(out_dir) 方法。
-    注意：这里只负责保存“适配器”本身，而非完整基础模型权重。
-    """
+def save_lora_adapter(model: _SavePretrainedLike, out_dir: Path | str) -> Path:
+    """仅保存 LoRA 适配器权重（要求对象实现 save_pretrained）。"""
     out_dir = Path(out_dir)
     ensure_dir(out_dir)
     if not hasattr(model, "save_pretrained"):
-        raise TypeError("传入的 model 不支持 save_pretrained 方法。")
+        raise TypeError("传入对象不支持 save_pretrained。")
     model.save_pretrained(str(out_dir))
     return out_dir
 
 
-# =========================
+# -------------------------
 # Matplotlib 图像保存
-# =========================
+# -------------------------
 
-def save_matplotlib_figure(fig,
-                           out_path: Path | str,
-                           dpi: int = 300,
-                           bbox_inches: str = "tight",
-                           close: bool = True) -> Path:
-    """
-    将 Matplotlib Figure 保存到文件。
-    - fig: 一个 Matplotlib 的 Figure 对象（例如 plt.gcf()）
-    - out_path: 输出路径（包含文件名与扩展名，如 'outputs/figures/curve.png'）
-    - dpi/bbox_inches: 常用保存参数
-    - close: 保存后是否调用 fig.clf()/plt.close(fig) 释放内存
-
-    返回：
-    - 实际保存的文件 Path
-    """
+def save_matplotlib_figure(
+    fig,
+    out_path: Path | str,
+    dpi: int = 300,
+    bbox_inches: str = "tight",
+    close: bool = True,
+) -> Path:
+    """保存 Matplotlib Figure 到文件。"""
     out_path = Path(out_path)
     ensure_dir(out_path.parent)
     fig.savefig(str(out_path), dpi=dpi, bbox_inches=bbox_inches)
     if close:
         try:
-            import matplotlib.pyplot as plt  # 延迟导入，避免无图环境报错
+            import matplotlib.pyplot as plt  # 延迟导入以降低依赖
             plt.close(fig)
         except Exception:
             pass
     return out_path
 
 
-# =========================
-# 文本/JSON 简易保存
-# =========================
+# -------------------------
+# 文本/JSON 读写
+# -------------------------
 
 def save_text(content: str, out_path: Path | str, encoding: str = "utf-8") -> Path:
-    """
-    将字符串写入到指定路径（自动创建父目录，覆盖写）。
-    """
+    """写入文本（覆盖）。"""
     out_path = Path(out_path)
     ensure_dir(out_path.parent)
     out_path.write_text(content, encoding=encoding)
     return out_path
 
 
-def save_json(obj: Any,
-              out_path: Path | str,
-              ensure_ascii: bool = False,
-              indent: int = 2) -> Path:
-    """
-    将 Python 对象以 JSON 格式写入文件。
-    - ensure_ascii=False：允许写入可读的非 ASCII 字符（中文等）
-    - indent=2：默认美化缩进，便于人工查看
-    """
+def save_json(
+    obj: Any,
+    out_path: Path | str,
+    ensure_ascii: bool = False,
+    indent: int = 2,
+) -> Path:
+    """写入 JSON（默认美化缩进，保留非 ASCII 字符）。"""
     out_path = Path(out_path)
     ensure_dir(out_path.parent)
     with out_path.open("w", encoding="utf-8") as f:
@@ -246,22 +187,13 @@ def save_json(obj: Any,
     return out_path
 
 
-# -------------------------------
-# JSON / 文本 读写便捷函数
-# -------------------------------
-from pathlib import Path
-import json
-
 def load_json(path: str | Path):
-    """
-    读取 JSON 文件并返回对象（dict/list/...）
-    """
+    """读取 JSON 并返回对象。"""
     p = Path(path)
     with p.open("r", encoding="utf-8") as f:
         return json.load(f)
 
+
 def load_text(path: str | Path) -> str:
-    """
-    读取纯文本文件并返回字符串
-    """
+    """读取纯文本并返回字符串。"""
     return Path(path).read_text(encoding="utf-8")

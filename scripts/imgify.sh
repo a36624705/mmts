@@ -1,16 +1,11 @@
 #!/usr/bin/env bash
-# 图像化（imgify）：读取配置文件 -> 后台运行 -> 写日志
-# 用法：
-#   bash scripts/imgify.sh configs/defaults.yaml
-# 或：
-#   bash scripts/imgify.sh    # 默认 configs/defaults.yaml
+# 图像化脚本（生成时间序列对应图像）
 
 set -euo pipefail
 
 GPU_ID="${GPU_ID:-0}"
 export CUDA_VISIBLE_DEVICES="${GPU_ID}"
 
-CONFIG="${1:-configs/defaults.yaml}"
 LOG_DIR="logs"
 mkdir -p "${LOG_DIR}"
 
@@ -18,12 +13,12 @@ ts() { date +"%Y-%m-%d_%H-%M-%S"; }
 RUN_ID="imgify_$(ts)"
 LOG_FILE="${LOG_DIR}/${RUN_ID}.log"
 
-echo "[IMGIFY] GPU=${CUDA_VISIBLE_DEVICES}"
-echo "[IMGIFY] CONFIG=${CONFIG}"
-echo "[IMGIFY] LOG=${LOG_FILE}"
+echo "[图像化] 使用 GPU=${CUDA_VISIBLE_DEVICES}"
+echo "[图像化] 日志文件=${LOG_FILE}"
 
-nohup python -u -m mmts.cli.imgify --config "${CONFIG}" > "${LOG_FILE}" 2>&1 &
+
+nohup python -u -m mmts.cli.imgify "$@" > "${LOG_FILE}" 2>&1 &
 PID=$!
 
-echo "[IMGIFY] Started PID=${PID} (nohup)"
-echo "[IMGIFY] Use 'tail -f ${LOG_FILE}' to check progress."
+echo "[图像化] 启动进程 PID=${PID}"
+echo "查看日志：tail -f ${LOG_FILE}"

@@ -1,8 +1,16 @@
 # src/mmts/imaging/__init__.py
 # -*- coding: utf-8 -*-
+"""Imaging 模块初始化：导出基础接口并自动注册内置渲染器。"""
 
-# 基础导出
-from .base import ScaleSpec, ImageRenderer, register_renderer, get_renderer, create_renderer
+from __future__ import annotations
+
+from .base import (
+    ScaleSpec,
+    ImageRenderer,
+    register_renderer,
+    get_renderer,
+    create_renderer,
+)
 
 # 自动加载内置渲染器（触发 @register_renderer）
 try:

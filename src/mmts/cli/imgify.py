@@ -1,73 +1,44 @@
 # src/mmts/cli/imgify.py
 # -*- coding: utf-8 -*-
 """
-图像化入口（Command Line Interface - imgify）
+图像化入口（Hydra 版）
 
-- 支持从 YAML 读取 data.imgify.* 配置；
-- 当未显式指定 (--x-npy/--y-npy/--out-dir) 时，会尝试在配置中读取
-  data.imgify.train 与 data.imgify.test，并分别生成；
-- 单次生成的输出路径为 out_dir/<renderer>/...，避免不同渲染器互相覆盖。
+功能
+----
+- 从根目录 configs/ 读取 data.imgify.* 配置（可用 Hydra CLI 覆盖）；
+- 若提供 data.imgify.single.{x_npy,y_npy,out_dir}，则执行单次导出；
+- 否则尝试 data.imgify.{train,test} 两套配置，分别导出；
+- 输出目录会追加 /<renderer>/ 以避免不同渲染器互相覆盖。
+
+用法示例
+--------
+# 单次导出
+python -m mmts.cli.imgify data.imgify.single.x_npy=data/X.npy \
+                          data.imgify.single.y_npy=data/y.npy \
+                          data.imgify.single.out_dir=images/FD001 \
+                          data.imgify.renderer=grayscale
+
+# 读 configs/imgify.yaml 中的 train/test 两套并导出
+python -m mmts.cli.imgify
+
+# 临时覆盖缩放与方向
+python -m mmts.cli.imgify data.imgify.scale_mode=percentile data.imgify.pmin=2 data.imgify.pmax=98 \
+                          data.imgify.orientation=col-major
 """
 
 from __future__ import annotations
 
-import argparse
 from pathlib import Path
-from typing import Any, Dict, Optional, Tuple
+from typing import Optional
+
+import hydra
+from hydra import utils as hyutils
+from omegaconf import DictConfig
 
 import numpy as np
 from tqdm import tqdm
 
 from ..imaging.base import ScaleSpec, create_renderer
-from ..configs.loader import load_config_tree
-
-
-# ---------------- 工具：配置读取与优先级合并 ----------------
-def cfg_get(cfg: Dict[str, Any], dotted: str, default: Any = None) -> Any:
-    cur: Any = cfg
-    for part in dotted.split("."):
-        if not isinstance(cur, dict) or part not in cur:
-            return default
-        cur = cur[part]
-    return cur
-
-
-def pick_from_cli_or_cfg(args, defaults, cfg: Dict[str, Any], arg_name: str, cfg_key: str, fallback: Any):
-    cli_val = getattr(args, arg_name)
-    def_val = getattr(defaults, arg_name)
-    if cli_val != def_val:
-        return cli_val
-    cfg_val = cfg_get(cfg, cfg_key, None)
-    if cfg_val is not None:
-        return cfg_val
-    return fallback
-
-
-# ---------------- CLI ----------------
-def build_argparser() -> argparse.ArgumentParser:
-    p = argparse.ArgumentParser(
-        description="Render time-series windows (X.npy) into images for VL fine-tuning.",
-        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
-    )
-    p.add_argument("--config", type=str, default=None, help="YAML 配置入口（如 configs/defaults.yaml）")
-
-    # 单次生成（若三者都不传，则自动读取 YAML 的 train/test 两份）
-    p.add_argument("--x-npy", type=str, default=None, help="输入窗口数组 X.npy（N,T,F）")
-    p.add_argument("--y-npy", type=str, default=None, help="输入标签数组 y.npy（N,）")
-    p.add_argument("--out-dir", type=str, default=None, help="输出上层目录（内部会再建 <renderer>/）")
-    p.add_argument("--max-samples", type=int, default=None, help="导出样本上限；缺省=全量")
-
-    # 渲染公共参数
-    p.add_argument("--renderer", type=str, default="grayscale")
-    p.add_argument("--orientation", type=str, default="row-major", choices=["row-major", "col-major"])
-    p.add_argument("--flip-vertical", action="store_true", default=False)
-    p.add_argument("--flip-horizontal", action="store_true", default=False)
-
-    # 缩放
-    p.add_argument("--scale-mode", type=str, default="percentile", choices=["global", "percentile", "sample"])
-    p.add_argument("--pmin", type=float, default=1.0)
-    p.add_argument("--pmax", type=float, default=99.0)
-    return p
 
 
 # ---------------- 生成一个拆分（train 或 test）的核心函数 ----------------
@@ -124,63 +95,69 @@ def _run_one_split(
     print(f"[Imgify] Saved y.npy -> {out_dir/'y.npy'}")
 
 
-# ---------------- 主流程 ----------------
-def main():
-    parser = build_argparser()
-    args = parser.parse_args()
-    defaults = parser.parse_args([])
+def _to_abs(p: Optional[str]) -> Optional[Path]:
+    """将（可能是相对的）配置路径，转换为 *原始工作目录* 下的绝对路径。"""
+    if p is None:
+        return None
+    pth = Path(p)
+    if pth.is_absolute():
+        return pth
+    return Path(hyutils.get_original_cwd()) / pth
 
-    cfg = load_config_tree(args.config) if args.config else {}
 
-    # 合并公共渲染与缩放参数
-    renderer    = pick_from_cli_or_cfg(args, defaults, cfg, "renderer",       "data.renderer",       defaults.renderer)
-    orientation = pick_from_cli_or_cfg(args, defaults, cfg, "orientation",    "data.imgify.orientation",    defaults.orientation)
-    flip_v      = bool(pick_from_cli_or_cfg(args, defaults, cfg, "flip_vertical",   "data.imgify.flip_vertical",   defaults.flip_vertical))
-    flip_h      = bool(pick_from_cli_or_cfg(args, defaults, cfg, "flip_horizontal", "data.imgify.flip_horizontal", defaults.flip_horizontal))
-    scale_mode  = pick_from_cli_or_cfg(args, defaults, cfg, "scale_mode",     "data.imgify.scale_mode",     defaults.scale_mode)
-    pmin        = float(pick_from_cli_or_cfg(args, defaults, cfg, "pmin",     "data.imgify.pmin",           defaults.pmin))
-    pmax        = float(pick_from_cli_or_cfg(args, defaults, cfg, "pmax",     "data.imgify.pmax",           defaults.pmax))
+# ---------------- 主流程（Hydra） ----------------
+@hydra.main(config_path='../../../configs', config_name='defaults', version_base='1.3')
+def main(cfg: DictConfig) -> None:
+    # 读取公共渲染/缩放参数
+    dcfg = cfg.get("data", {})
+    icfg = dcfg.get("imgify", {})
 
-    # 如果显式给了 x/y/out_dir，就只生成一份
-    if args.x_npy and args.y_npy and args.out_dir:
-        x_path = Path(args.x_npy)
-        y_path = Path(args.y_npy)
-        out_dir_root = Path(args.out_dir)
+    renderer     = str(icfg.get("renderer", "grayscale"))
+    orientation  = str(icfg.get("orientation", "row-major"))
+    flip_v       = bool(icfg.get("flip_vertical", False))
+    flip_h       = bool(icfg.get("flip_horizontal", False))
+    scale_mode   = str(icfg.get("scale_mode", "percentile"))
+    pmin         = float(icfg.get("pmin", 1.0))
+    pmax         = float(icfg.get("pmax", 99.0))
+
+    # 优先：single 模式（一次性导出）
+    single = icfg.get("single", {})
+    x_single = _to_abs(single.get("x_npy")) if single else None
+    y_single = _to_abs(single.get("y_npy")) if single else None
+    out_single = _to_abs(single.get("out_dir")) if single else None
+    max_single = single.get("max_samples", None) if single else None
+
+    if x_single and y_single and out_single:
         _run_one_split(
-            x_path, y_path, out_dir_root,
-            renderer, orientation, args.flip_vertical, args.flip_horizontal,
-            scale_mode, pmin, pmax, args.max_samples,
+            x_single, y_single, out_single,
+            renderer, orientation, flip_v, flip_h,
+            scale_mode, pmin, pmax, max_single,
         )
         print("[Imgify] Done (single split).")
         return
 
-    # 否则：从配置读取 train/test 的路径；能读到哪个就生成哪个
-    splits = []
-    for split_name in ("train", "test"):
-        base = f"data.imgify.{split_name}"
-        x_npy = cfg_get(cfg, f"{base}.x_npy")
-        y_npy = cfg_get(cfg, f"{base}.y_npy")
-        out_dir = cfg_get(cfg, f"{base}.out_dir")
-        max_samples = cfg_get(cfg, f"{base}.max_samples", None)
+    # 否则：尝试 train/test 两套配置
+    splits_conf = []
+    for split in ("train", "test"):
+        sc = icfg.get(split, {})
+        x_npy = _to_abs(sc.get("x_npy"))
+        y_npy = _to_abs(sc.get("y_npy"))
+        out_dir = _to_abs(sc.get("out_dir"))
+        max_samples = sc.get("max_samples", None)
         if x_npy and y_npy and out_dir:
-            splits.append((
-                Path(str(x_npy)),
-                Path(str(y_npy)),
-                Path(str(out_dir)),
-                max_samples,
-                split_name,
-            ))
+            splits_conf.append((split, x_npy, y_npy, out_dir, max_samples))
 
-    if not splits:
+    if not splits_conf:
         raise ValueError(
-            "未提供 (--x-npy/--y-npy/--out-dir)，同时配置文件中也没有 data.imgify.train/test 的三元组。"
+            "未检测到导出配置：请在 configs/imgify.yaml 中设置 "
+            "data.imgify.single.{x_npy,y_npy,out_dir} 或 data.imgify.{train,test}.{x_npy,y_npy,out_dir}。"
         )
 
-    for x_path, y_path, out_dir_root, max_samples, split_name in splits:
+    for split_name, x_path, y_path, out_dir_root, max_samples in splits_conf:
         print(f"\n[Imgify] === Split: {split_name} ===")
         _run_one_split(
             x_path, y_path, out_dir_root,
-            renderer, orientation, args.flip_vertical, args.flip_horizontal,
+            renderer, orientation, flip_v, flip_h,
             scale_mode, pmin, pmax, max_samples,
         )
 
