@@ -11,7 +11,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, Optional, Tuple
 
 import hydra
 from omegaconf import DictConfig
@@ -78,6 +78,61 @@ def _load_rules_text(rules_file: Optional[str]) -> str:
         )
 
 
+# ===== 新增：latest_dir() 的 Python 等价实现 =====
+def _latest_subdir(parent: Path) -> Optional[str]:
+    """
+    返回 parent 目录下一层“最近修改时间”的子目录路径（字符串），若不存在返回 None。
+    """
+    if not parent.exists() or not parent.is_dir():
+        return None
+    # 仅考虑一级子目录
+    subdirs = [p for p in parent.iterdir() if p.is_dir()]
+    if not subdirs:
+        return None
+    latest = max(subdirs, key=lambda p: p.stat().st_mtime)
+    return str(latest.as_posix())
+
+
+def _maybe_auto_select_dirs(
+    lora_dir: Optional[str],
+    processor_dir: Optional[str],
+    outputs_root: str,
+) -> Tuple[str, Optional[str], dict]:
+    """
+    若 lora_dir / processor_dir 未显式提供或传 "latest"，
+    则从 outputs_root/{lora,processor} 下自动选择最近修改的子目录。
+    返回 (lora_dir, processor_dir, info)。
+    """
+    info = {"auto_lora": False, "auto_processor": False}
+
+    # LoRA：必须能解析出目录，否则报错
+    if lora_dir is None or str(lora_dir).strip().lower() == "latest":
+        auto = _latest_subdir(Path(outputs_root) / "lora")
+        if not auto:
+            raise ValueError(
+                f"未找到可用的 LoRA 目录。请显式设置 eval.lora_dir，或确保 {outputs_root}/lora/ 下存在子目录。"
+            )
+        lora_dir = auto
+        info["auto_lora"] = True
+
+    # Processor：可自动，也可回退到 base model 的 processor
+    if processor_dir is None or str(processor_dir).strip().lower() == "latest":
+        auto = _latest_subdir(Path(outputs_root) / "processor")
+        if auto:
+            processor_dir = auto
+            info["auto_processor"] = True
+        else:
+            # 不报错，后续将回退到 base model processor
+            processor_dir = None
+
+    # 规范化去尾斜杠
+    lora_dir = str(Path(lora_dir).as_posix())
+    if processor_dir is not None:
+        processor_dir = str(Path(processor_dir).as_posix())
+
+    return lora_dir, processor_dir, info
+
+
 @hydra.main(config_path="../../../configs", config_name="defaults", version_base="1.3")
 def main(cfg: DictConfig) -> None:
     # ---- 读取关键配置 ----
@@ -102,8 +157,16 @@ def main(cfg: DictConfig) -> None:
     rul_low        = float(_cfg_get(cfg, "eval.rul_low", 0.0))
     rul_high       = float(_cfg_get(cfg, "eval.rul_high", 150.0))
 
-    if lora_dir is None:
-        raise ValueError("必须提供 LoRA 目录：eval.lora_dir")
+    # ==== 新增：默认开启“latest”行为（显式传入优先） ====
+    lora_dir, processor_dir, _auto_info = _maybe_auto_select_dirs(lora_dir, processor_dir, outputs_root)
+    if _auto_info.get("auto_lora"):
+        print(f"[Auto] Using latest LoRA under '{outputs_root}/lora': {lora_dir}")
+    else:
+        print(f"[Info] Using provided LoRA dir: {lora_dir}")
+    if _auto_info.get("auto_processor"):
+        print(f"[Auto] Using latest Processor under '{outputs_root}/processor': {processor_dir}")
+    else:
+        print(f"[Info] Processor dir: {processor_dir or '<none - will use base model processor>'}")
 
     # ---- 规则文本 ----
     rules = _load_rules_text(rules_file)

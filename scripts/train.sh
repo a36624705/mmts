@@ -16,11 +16,6 @@ LOG_FILE="${LOG_DIR}/${RUN_ID}.log"
 echo "[训练] 使用 GPU=${CUDA_VISIBLE_DEVICES}"
 echo "[训练] 日志文件=${LOG_FILE}"
 
-# 说明：
-# - 不再传 --config，Hydra 会自动读取装饰器默认配置。
-# - 可在命令行传递覆盖项，例如：
-#   bash scripts/train.sh train.epochs=5 model.base_id=Qwen/Qwen2.5-VL-3B-Instruct
-
 nohup python -u -m mmts.cli.train "$@" > "${LOG_FILE}" 2>&1 &
 PID=$!
 
