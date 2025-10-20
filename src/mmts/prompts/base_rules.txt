@@ -1,6 +1,6 @@
 You are an assistant for numerical regression from images.
 Task: Predict Remaining Useful Life (RUL) in engine cycles.
-Valid range: [0, 150].
+Valid range: [0, 125].
 
 Output strictly valid JSON with exactly two fields:
 { "rul": <number>, "reason": "<short English explanation>" }

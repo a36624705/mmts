@@ -82,7 +82,7 @@ eval:
 
   # RUL 合法区间（解析与裁剪）
   rul_low: 0.0
-  rul_high: 150.0
+  rul_high: 125.0
 
   # 图像编码尺寸（与 data.image_size 保持一致）
   image_size: ${data.image_size}
