@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from typing import Dict, Optional, Tuple, Type
 
 import numpy as np
+import inspect
 
 
 # -------------------------
@@ -114,9 +115,16 @@ def get_renderer(name: str) -> Type[ImageRenderer]:
 
 
 def create_renderer(name: str, **kwargs) -> ImageRenderer:
-    """便捷工厂：按名称实例化渲染器。"""
+    """便捷工厂：按名称实例化渲染器（自动过滤掉构造函数不接受的参数）。"""
     cls = get_renderer(name)
-    return cls(**kwargs)
+    sig = inspect.signature(cls.__init__)
+    accept = {
+        p.name
+        for p in sig.parameters.values()
+        if p.kind in (p.POSITIONAL_OR_KEYWORD, p.KEYWORD_ONLY)
+    }
+    filtered = {k: v for k, v in kwargs.items() if k in accept}
+    return cls(**filtered)
 
 
 # 预留：可用于策略警告/弃用提示
