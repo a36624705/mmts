@@ -15,5 +15,6 @@ from .base import (
 # 自动加载内置渲染器（触发 @register_renderer）
 try:
     from .renderers import grayscale  # noqa: F401
+    from .renderers import gasf
 except Exception:
     pass
