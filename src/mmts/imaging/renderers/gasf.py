@@ -141,7 +141,6 @@ class GasfGridRenderer(ImageRenderer):
         self.flip_horizontal = bool(flip_horizontal) if flip_horizontal is not None else False
 
     def render(self, sample: np.ndarray, *, scaler: ScaleSpec) -> Image.Image:
-        print(sample.shape)
         # ScaleSpec 在此无需改变时序结构，仅保证输入合法，做一次装配即可
         sx = np.asarray(sample, dtype=np.float32)
         if sx.ndim != 2:
