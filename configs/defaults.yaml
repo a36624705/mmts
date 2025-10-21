@@ -26,6 +26,7 @@ data:
   train_dir: data/images/FD001/train
   test_dir:  data/images/FD001/test
   image_glob: sample_*.png
+  renderer: ${data.imgify.renderer}
   label_filename: y.npy
   image_size: 448
   seed: 42
