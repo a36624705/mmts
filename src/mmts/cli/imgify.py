@@ -54,6 +54,9 @@ def _run_one_split(
     pmin: float,
     pmax: float,
     max_samples: Optional[int],
+    patch_window: int,
+    patch_stride: int,
+    cmap: str
 ):
     out_dir = out_dir_root / renderer.lower()
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -85,6 +88,9 @@ def _run_one_split(
         orientation=orientation,
         flip_vertical=bool(flip_v),
         flip_horizontal=bool(flip_h),
+        patch_window=patch_window,
+        patch_stride=patch_stride,
+        cmap=cmap
     )
 
     for i in tqdm(range(n_export), desc="Imgify", ncols=100):
@@ -119,6 +125,9 @@ def main(cfg: DictConfig) -> None:
     scale_mode   = str(icfg.get("scale_mode", "percentile"))
     pmin         = float(icfg.get("pmin", 1.0))
     pmax         = float(icfg.get("pmax", 99.0))
+    patch_window = int(icfg.get("patch_window", 20))
+    patch_stride = int(icfg.get("patch_stride", 1))
+    cmap         = str(icfg.get("cmap", "rainbow"))
 
     # 优先：single 模式（一次性导出）
     single = icfg.get("single", {})
@@ -131,7 +140,7 @@ def main(cfg: DictConfig) -> None:
         _run_one_split(
             x_single, y_single, out_single,
             renderer, orientation, flip_v, flip_h,
-            scale_mode, pmin, pmax, max_single,
+            scale_mode, pmin, pmax, max_single, patch_window, patch_stride, cmap
         )
         print("[Imgify] Done (single split).")
         return
@@ -158,7 +167,7 @@ def main(cfg: DictConfig) -> None:
         _run_one_split(
             x_path, y_path, out_dir_root,
             renderer, orientation, flip_v, flip_h,
-            scale_mode, pmin, pmax, max_samples,
+            scale_mode, pmin, pmax, max_samples, patch_window, patch_stride, cmap
         )
 
     print("\n[Imgify] Done (multi-split).")

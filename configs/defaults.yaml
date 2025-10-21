@@ -25,7 +25,6 @@ data:
   # 训练/评估阶段读取图像数据的路径（可直接指向 renderer 上层，CLI 会自动拼接 /<renderer>）
   train_dir: data/images/FD001/train
   test_dir:  data/images/FD001/test
-  renderer:  grayscale
   image_glob: sample_*.png
   label_filename: y.npy
   image_size: 448
@@ -35,12 +34,16 @@ data:
   # imgify 图像化配置（供 mmts.cli.imgify 使用）
   imgify:
     # 渲染公共参数（train/test 共享）
+    renderer:  gasf
     orientation: row-major        # row-major: (T,F) -> T 为纵轴、F 为横轴；col-major 反之
     flip_vertical: false
     flip_horizontal: false
     scale_mode: percentile        # global / percentile / sample
     pmin: 1
     pmax: 99
+    patch_window: 20
+    patch_stride: 1
+    cmap: rainbow
 
     # 训练集图像化
     train:
