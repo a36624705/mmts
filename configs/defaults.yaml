@@ -22,7 +22,20 @@ lora:
 
 data:
   name: FD001
-  # 训练/评估阶段读取图像数据的路径（可直接指向 renderer 上层，CLI 会自动拼接 /<renderer>）
+
+  # === 新增：默认预处理设置 ===
+  preprocess:
+    raw_dir: data/raw                    # 原始 C-MAPSS 数据路径
+    out_dir: data/processed              # 输出路径 (预处理结果 npy)
+    rearley: 125                         # RUL 截断上限
+    window_size: auto                    # FD001=30, FD002=20, FD003=30, FD004=15
+    step: 1                              # 滑动步长
+    test_last_window: true               # 测试集仅保留每台发动机最后一个窗
+    scale_mode: minmax                   # Min–Max [-1,1]（论文通用）
+    select14: false                      # 是否保留14个有效传感器（默认false）
+  # ==================================
+
+  # 训练/评估阶段读取图像数据的路径
   train_dir: data/images/FD001/train
   test_dir:  data/images/FD001/test
   image_glob: sample_*.png
@@ -30,35 +43,36 @@ data:
   label_filename: y.npy
   image_size: 448
   seed: 42
-  train_ratio: 0.8     # 如果使用 data_root 单目录切分时生效
+  train_ratio: 0.8     # 若单目录切分时使用
 
-  # imgify 图像化配置（供 mmts.cli.imgify 使用）
+  # === 图像化配置（mmts.cli.imgify） ===
   imgify:
-    # 渲染公共参数（train/test 共享）
-    renderer:  gasf
-    orientation: row-major        # row-major: (T,F) -> T 为纵轴、F 为横轴；col-major 反之
+    renderer: gasf
+    orientation: row-major
     flip_vertical: false
     flip_horizontal: false
-    scale_mode: percentile        # global / percentile / sample
+
+    # === 默认使用预处理后的缩放结果 ===
+    scale_mode: none          # 不再在 imgify 阶段做缩放（预处理已完成）
     pmin: 1
     pmax: 99
     patch_window: 20
     patch_stride: 1
     cmap: rainbow
+    # =======================================
 
-    # 训练集图像化
     train:
-      x_npy: data/ts/X_train_FD001.npy
-      y_npy: data/ts/y_train_FD001.npy
+      x_npy: data/processed/FD001/X_train.npy
+      y_npy: data/processed/FD001/y_train.npy
       out_dir: data/images/FD001/train
-      max_samples: 100
+      max_samples: null       # 全量样本
 
-    # 测试集图像化
     test:
-      x_npy: data/ts/X_test_FD001.npy
-      y_npy: data/ts/y_test_FD001.npy
+      x_npy: data/processed/FD001/X_test.npy
+      y_npy: data/processed/FD001/y_test.npy
       out_dir: data/images/FD001/test
-      max_samples: 10
+      max_samples: null       # 全量测试（100 个样本）
+  # =======================================
 
 train:
   epochs: 3
@@ -88,7 +102,6 @@ eval:
   rul_low: 0.0
   rul_high: 125.0
 
-  # 图像编码尺寸（与 data.image_size 保持一致）
   image_size: ${data.image_size}
 
   metrics:
