@@ -30,8 +30,8 @@ import torch
 # ==== 项目内模块 ====
 from ..utils.seed import set_global_seed, set_torch_backends
 from ..utils.io import build_output_paths, gen_run_name
-from ..models.loader import load_model_and_processor
-from ..models.lora import LoRAParams, attach_lora
+from ..core.loader import load_model_and_processor
+from ..core.lora import LoRAParams, attach_lora
 from ..data.builders import (
     DatasetBuildConfig,
     build_hfds_from_explicit,
@@ -65,16 +65,18 @@ def _resolve_with_renderer(path: Optional[str], renderer: Optional[str]) -> Opti
 
 
 def _load_rules_text(rules_file: Optional[str]) -> str:
-    """优先读配置指定的规则文件；否则读取包内 mmts/prompts/base_rules.txt。"""
+    """优先读配置指定的规则文件；否则读取项目根目录的 configs/base_rules.txt。"""
     if rules_file:
         return Path(rules_file).read_text(encoding="utf-8")
-    # 包内默认
+    # 项目根目录默认
     try:
-        from importlib import resources
-        return resources.files("mmts.prompts").joinpath("base_rules.txt").read_text(encoding="utf-8")
+        # 获取项目根目录（当前工作目录的父目录）
+        project_root = Path(__file__).parent.parent.parent.parent
+        default_rules = project_root / "configs" / "base_rules.txt"
+        return default_rules.read_text(encoding="utf-8")
     except Exception:
         raise FileNotFoundError(
-            "未能读取规则文本。请在配置中设置 prompts.rules_file，或确保包内存在 mmts/prompts/base_rules.txt。"
+            "未能读取规则文本。请在配置中设置 prompts.rules_file，或确保项目根目录存在 configs/base_rules.txt。"
         )
 
 

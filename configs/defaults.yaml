@@ -47,7 +47,7 @@ data:
 
   # === 图像化配置（mmts.cli.imgify） ===
   imgify:
-    renderer: gasf
+    renderer: grayscale
     orientation: row-major
     flip_vertical: false
     flip_horizontal: false
@@ -65,13 +65,13 @@ data:
       x_npy: data/processed/FD001/X_train.npy
       y_npy: data/processed/FD001/y_train.npy
       out_dir: data/images/FD001/train
-      max_samples: null       # 全量样本
+      max_samples: 100
 
     test:
       x_npy: data/processed/FD001/X_test.npy
       y_npy: data/processed/FD001/y_test.npy
       out_dir: data/images/FD001/test
-      max_samples: null       # 全量测试（100 个样本）
+      max_samples: null
   # =======================================
 
 train:
@@ -111,4 +111,4 @@ eval:
     - valid_ratio
 
 prompts:
-  rules_file: src/mmts/prompts/base_rules.txt
+  rules_file: configs/base_rules.txt

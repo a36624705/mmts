@@ -1,4 +1,4 @@
-# src/mmts/prompts/templates.py
+# src/mmts/utils/prompts.py
 # -*- coding: utf-8 -*-
 """多模态 JSON 回归任务的消息模板构造与封装。"""
 

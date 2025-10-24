@@ -19,8 +19,9 @@ import inspect
 class ScaleSpec:
     """
     将原始矩阵缩放到 [0,1] 的规范：
-    - mode: "global" | "percentile" | "sample"
+    - mode: "global" | "percentile" | "sample" | "none"
     - global/percentile 需先 fit_global() 得到 (vmin, vmax)
+    - none 模式表示不进行缩放，直接使用原始值
     """
     mode: str = "percentile"
     vmin: Optional[float] = None
@@ -47,6 +48,8 @@ class ScaleSpec:
                 self.vmax = float(np.percentile(flat, self.pmax))
         elif self.mode == "sample":
             self.vmin, self.vmax = None, None
+        elif self.mode == "none":
+            self.vmin, self.vmax = None, None
         else:
             raise ValueError(f"Unknown scale mode: {self.mode}")
         return self
@@ -60,6 +63,9 @@ class ScaleSpec:
         if self.mode == "sample":
             vmin = float(np.nanmin(x))
             vmax = float(np.nanmax(x))
+        elif self.mode == "none":
+            # none 模式：不进行缩放，直接返回原始值（假设已经在 [0,1] 范围内）
+            return np.clip(x, 0.0, 1.0)
         else:
             if self.vmin is None or self.vmax is None:
                 raise RuntimeError("ScaleSpec not fitted for global/percentile mode.")

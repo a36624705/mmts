@@ -20,7 +20,7 @@ from PIL import Image
 import torch
 from tqdm import tqdm
 
-from ..models.loader import configure_for_inference
+from ..core.loader import configure_for_inference
 from ..utils.json_parse import (
     extract_first_json_block,
     find_and_parse_first_json,

@@ -10,7 +10,7 @@ from transformers import Trainer, TrainingArguments
 
 # 可选：打印参数统计（若未装 LoRA 也不报错）
 try:
-    from ..models.lora import print_trainable_parameters  # 仅用于统计输出
+    from ..core.lora import print_trainable_parameters  # 仅用于统计输出
 except Exception:  # pragma: no cover
     def print_trainable_parameters(model):  # type: ignore
         return {}

@@ -20,13 +20,13 @@ from __future__ import annotations
 __version__ = "0.1.0"
 
 # -------------------------
-# models：加载与 LoRA
+# core：加载与 LoRA
 # -------------------------
-from .models.loader import (
+from .core.loader import (
     load_model_and_processor,
     configure_for_inference,
 )
-from .models.lora import (
+from .core.lora import (
     LoRAParams,
     build_lora_config,
     attach_lora,
@@ -98,6 +98,11 @@ from .utils.io import (
     save_matplotlib_figure,
     load_processor,
 )
+from .utils.prompts import (
+    build_train_messages,
+    build_infer_messages,
+    apply_chat_template,
+)
 
 __all__ = [
     "__version__",
@@ -119,4 +124,5 @@ __all__ = [
     "build_output_paths", "gen_run_name",
     "save_json", "load_json", "save_text", "load_text", "save_matplotlib_figure",
     "load_processor",
+    "build_train_messages", "build_infer_messages", "apply_chat_template",
 ]
