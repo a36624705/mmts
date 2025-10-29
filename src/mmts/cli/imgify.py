@@ -41,6 +41,26 @@ from tqdm import tqdm
 from ..imaging.base import ScaleSpec, create_renderer
 
 
+# ---------------- 检查现有图像数量 ----------------
+def _check_existing_images(out_dir: Path, expected_count: int) -> tuple[int, bool]:
+    """检查现有图像数量，返回(现有数量, 是否足够)"""
+    if not out_dir.exists():
+        return 0, False
+    
+    # 统计现有图像文件
+    existing_images = list(out_dir.glob("sample_*.png"))
+    existing_count = len(existing_images)
+    
+    # 检查标签文件
+    y_file = out_dir / "y.npy"
+    has_labels = y_file.exists()
+    
+    # 如果图像数量足够且存在标签文件，则认为足够
+    is_sufficient = existing_count >= expected_count and has_labels
+    
+    return existing_count, is_sufficient
+
+
 # ---------------- 生成一个拆分（train 或 test）的核心函数 ----------------
 def _run_one_split(
     x_path: Path,
@@ -56,11 +76,11 @@ def _run_one_split(
     max_samples: Optional[int],
     patch_window: int,
     patch_stride: int,
-    cmap: str
+    cmap: str,
+    force_regenerate: bool = False,
 ):
     out_dir = out_dir_root / renderer.lower()
-    out_dir.mkdir(parents=True, exist_ok=True)
-
+    
     print(f"[Imgify] Renderer={renderer}  -> Out={out_dir}")
     print(f"[Imgify] Loading: X={x_path} ; y={y_path}")
 
@@ -76,7 +96,34 @@ def _run_one_split(
 
     N = X.shape[0]
     n_export = min(max_samples if max_samples is not None else N, N)
+    
+    # 检查现有图像
+    if not force_regenerate:
+        existing_count, is_sufficient = _check_existing_images(out_dir, n_export)
+        if is_sufficient and existing_count == n_export:
+            print(f"[Imgify] 跳过生成：已存在 {existing_count} 个图像（需要 {n_export} 个）")
+            return
+        elif existing_count > n_export:
+            print(f"[Imgify] 重新生成：已存在 {existing_count} 个图像（需要 {n_export} 个），将清空目录后重新生成")
+            # 清空目录
+            import shutil
+            if out_dir.exists():
+                shutil.rmtree(out_dir)
+        elif existing_count > 0:
+            print(f"[Imgify] 部分生成：已存在 {existing_count} 个图像，将生成缺失的 {n_export - existing_count} 个")
+        else:
+            print(f"[Imgify] 全新生成：将生成 {n_export} 个图像")
+    else:
+        print(f"[Imgify] 强制重新生成：将覆盖现有图像")
+        # 清空目录
+        import shutil
+        if out_dir.exists():
+            shutil.rmtree(out_dir)
+    
     print(f"[Imgify] Will export {n_export}/{N} samples")
+
+    # 创建输出目录
+    out_dir.mkdir(parents=True, exist_ok=True)
 
     scaler = ScaleSpec(mode=scale_mode, pmin=float(pmin), pmax=float(pmax))
     if scaler.mode in ("global", "percentile"):
@@ -118,6 +165,7 @@ def main(cfg: DictConfig) -> None:
     dcfg = cfg.get("data", {})
     icfg = dcfg.get("imgify", {})
 
+    force_regenerate = bool(icfg.get("force_regenerate", False))
     renderer     = str(icfg.get("renderer", "grayscale"))
     orientation  = str(icfg.get("orientation", "row-major"))
     flip_v       = bool(icfg.get("flip_vertical", False))
@@ -140,7 +188,8 @@ def main(cfg: DictConfig) -> None:
         _run_one_split(
             x_single, y_single, out_single,
             renderer, orientation, flip_v, flip_h,
-            scale_mode, pmin, pmax, max_single, patch_window, patch_stride, cmap
+            scale_mode, pmin, pmax, max_single, patch_window, patch_stride, cmap,
+            force_regenerate
         )
         print("[Imgify] Done (single split).")
         return
@@ -167,7 +216,8 @@ def main(cfg: DictConfig) -> None:
         _run_one_split(
             x_path, y_path, out_dir_root,
             renderer, orientation, flip_v, flip_h,
-            scale_mode, pmin, pmax, max_samples, patch_window, patch_stride, cmap
+            scale_mode, pmin, pmax, max_samples, patch_window, patch_stride, cmap,
+            force_regenerate
         )
 
     print("\n[Imgify] Done (multi-split).")

@@ -88,13 +88,17 @@ def main(cfg: DictConfig) -> None:
     # 可打印最终配置（调试用）：print(OmegaConf.to_yaml(cfg))
     # ---- 读取关键配置 ----
     model_id       = _cfg_get(cfg, "model.model_id", "Qwen/Qwen2.5-VL-3B-Instruct")
-    outputs_root   = _cfg_get(cfg, "paths.outputs_root", "outputs")
+    experiments_root = _cfg_get(cfg, "paths.experiments_root", "experiments")
 
     renderer       = _cfg_get(cfg, "data.renderer", None)
     train_dir_raw  = _cfg_get(cfg, "data.train_dir", None)
     test_dir_raw   = _cfg_get(cfg, "data.test_dir", None)
     data_root      = _cfg_get(cfg, "data.data_root", None)
     train_ratio    = float(_cfg_get(cfg, "data.train_ratio", 0.8))
+    
+    # 样本数量限制（从图像化配置中读取）
+    train_max_samples = _cfg_get(cfg, "data.imgify.train.max_samples", None)
+    test_max_samples = _cfg_get(cfg, "data.imgify.test.max_samples", None)
 
     rules_file     = _cfg_get(cfg, "prompts.rules_file", None)
     image_glob     = _cfg_get(cfg, "data.image_glob", "sample_*.png")
@@ -129,9 +133,35 @@ def main(cfg: DictConfig) -> None:
     # ---- 规则文本 ----
     rules = _load_rules_text(rules_file)
 
-    # ---- 输出目录与随机性/后端 ----
-    run_name = gen_run_name("train")
-    paths = build_output_paths(root=outputs_root, with_run=False)
+    # ---- 创建实验管理器 ----
+    from mmts.utils.experiment import get_experiment_manager
+    exp_manager = get_experiment_manager(experiments_root)
+    
+    # 检查是否指定了实验ID
+    experiment_id = _cfg_get(cfg, "experiment_id", None)
+    
+    if experiment_id:
+        # 使用指定的实验ID创建实验
+        exp_name = f"vl_lora_train"
+        exp_description = f"训练LoRA模型 - epochs={epochs}, lr={lr}, batch_size={batch_size}"
+        exp_info, exp_paths = exp_manager.create_experiment(
+            name=exp_name,
+            config=cfg,
+            description=exp_description,
+            experiment_id=experiment_id
+        )
+    else:
+        # 自动生成实验ID
+        exp_name = f"vl_lora_train"
+        exp_description = f"训练LoRA模型 - epochs={epochs}, lr={lr}, batch_size={batch_size}"
+        exp_info, exp_paths = exp_manager.create_experiment(
+            name=exp_name,
+            config=cfg,
+            description=exp_description
+        )
+    
+    print(f"[Experiment] 创建实验: {exp_info.experiment_id}")
+    print(f"[Experiment] 实验目录: {exp_paths.root}")
 
     set_global_seed(seed, deterministic=False)
     set_torch_backends(allow_tf32=allow_tf32, cudnn_benchmark=True, cudnn_deterministic=False)
@@ -191,6 +221,15 @@ def main(cfg: DictConfig) -> None:
     else:
         raise ValueError("请在配置中提供 (data.train_dir 与 data.test_dir) 或 (data.data_root) 之一。")
 
+    # ---- 应用样本数量限制 ----
+    if train_max_samples is not None and len(train_hf) > train_max_samples:
+        print(f"[Info] 限制训练样本数量: {len(train_hf)} -> {train_max_samples}")
+        train_hf = train_hf.select(range(train_max_samples))
+    
+    if test_max_samples is not None and len(test_hf) > test_max_samples:
+        print(f"[Info] 限制测试样本数量: {len(test_hf)} -> {test_max_samples}")
+        test_hf = test_hf.select(range(test_max_samples))
+
     # ---- 简短 sanity check ----
     try:
         cnts = preview_supervised_token_counts(train_hf, processor.tokenizer, k=3)
@@ -223,7 +262,8 @@ def main(cfg: DictConfig) -> None:
         max_grad_norm=1.0,
         report_to="none",
     )
-    ckpt_dir = paths.checkpoints / f"vl_lora_{run_name}"
+    # 使用实验目录作为checkpoint目录
+    ckpt_dir = exp_paths.checkpoints
     args_hf = build_training_arguments(output_dir=ckpt_dir, cfg=tr_cfg)
 
     trainer = build_trainer(
@@ -238,20 +278,27 @@ def main(cfg: DictConfig) -> None:
 
     # ---- 训练 ----
     print("[Train] Start SFT...")
-    trainer.train()
-    print("[Train] Finished.")
+    try:
+        trainer.train()
+        print("[Train] Finished.")
+        
+        # 更新实验状态为完成
+        exp_manager.update_experiment_status(exp_info.experiment_id, "completed")
+        
+    except Exception as e:
+        print(f"[Train] Failed: {e}")
+        exp_manager.update_experiment_status(exp_info.experiment_id, "failed")
+        raise
 
-    # ---- 保存 LoRA 与 Processor ----
-    lora_out = (paths.lora / run_name).as_posix()
-    proc_out = (paths.processor / run_name).as_posix()
-    save_lora_and_processor(
-        trainer,
-        lora_output_dir=lora_out,
+    # ---- 保存统一模型（LoRA + Processor） ----
+    from mmts.utils.io import save_unified_model
+    model_output_dir = save_unified_model(
+        trainer=trainer,
         processor=processor,
-        processor_output_dir=proc_out,
+        output_dir=exp_paths.models,
+        save_checkpoint=True
     )
-    print(f"[Save] LoRA adapter saved to: {lora_out}")
-    print(f"[Save] Processor saved to:   {proc_out}")
+    print(f"[Save] 统一模型已保存到: {model_output_dir}")
 
 
 if __name__ == "__main__":

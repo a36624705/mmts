@@ -1,23 +1,17 @@
 #!/usr/bin/env bash
-# 训练脚本
+# 训练脚本（优化版本）
 
 set -euo pipefail
 
-GPU_ID="${GPU_ID:-0}"
+GPU_ID="${GPU_ID:-3}"
 export CUDA_VISIBLE_DEVICES="${GPU_ID}"
 
-LOG_DIR="logs"
-mkdir -p "${LOG_DIR}"
-
-ts() { date +"%Y-%m-%d_%H-%M-%S"; }
-RUN_ID="train_$(ts)"
-LOG_FILE="${LOG_DIR}/${RUN_ID}.log"
-
+# 使用实验管理器，不再需要单独的日志目录
 echo "[训练] 使用 GPU=${CUDA_VISIBLE_DEVICES}"
-echo "[训练] 日志文件=${LOG_FILE}"
+echo "[训练] 实验将保存在 experiments/ 目录下"
 
-nohup python -u -m mmts.cli.train "$@" > "${LOG_FILE}" 2>&1 &
-PID=$!
+# 直接运行训练，Hydra已禁用自动输出目录
+python -u -m mmts.cli.train "$@"
 
-echo "[训练] 启动进程 PID=${PID}"
-echo "查看日志：tail -f ${LOG_FILE}"
+echo "[训练] 训练完成！"
+echo "查看实验: ls experiments/"

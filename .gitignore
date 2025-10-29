@@ -31,6 +31,7 @@ pytest_cache/
 # =========================
 outputs/
 logs/
+experiments/
 
 # =========================
 # Data / 数据集
@@ -44,3 +45,5 @@ data/
 # =========================
 tmp/
 .cursor/
+docs/
+.hydra/

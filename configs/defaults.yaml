@@ -1,5 +1,11 @@
 paths:
   outputs_root: outputs   # 训练/评估产物根目录（lora、processor、logs、figures、checkpoints）
+  experiments_root: experiments  # 实验管理目录（新优化结构）
+
+# Hydra配置：禁用自动输出目录管理
+hydra:
+  run:
+    dir: .  # 禁用Hydra的自动输出目录
 
 model:
   base_id: Qwen/Qwen2.5-VL-3B-Instruct
@@ -47,6 +53,7 @@ data:
 
   # === 图像化配置（mmts.cli.imgify） ===
   imgify:
+    force_regenerate: false   # 是否强制重新生成图像（默认关闭）
     renderer: grayscale
     orientation: row-major
     flip_vertical: false
@@ -71,14 +78,14 @@ data:
       x_npy: data/processed/FD001/X_test.npy
       y_npy: data/processed/FD001/y_test.npy
       out_dir: data/images/FD001/test
-      max_samples: null
+      max_samples: 10
   # =======================================
 
 train:
   epochs: 3
-  batch_size: 1
-  grad_accum: 8
-  lr: 2e-4
+  batch_size: 8
+  grad_accum: 4
+  lr: 2e-5
   weight_decay: 0.01
   warmup_ratio: 0.05
   scheduler: cosine
@@ -90,8 +97,8 @@ train:
   allow_tf32: true
 
 eval:
-  lora_dir: null
-  processor_dir: null
+  experiment_id: null  # 指定实验ID，为null时使用最新实验
+  use_latest: true     # 是否使用最新实验
   
   # 生成超参
   max_new_tokens: 32

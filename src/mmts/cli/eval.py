@@ -1,27 +1,25 @@
 # src/mmts/cli/eval.py
 # -*- coding: utf-8 -*-
 """
-评估入口（Hydra 版）
-- 读取根目录 configs/ 下的配置（可被 CLI 覆盖）
-- 加载基础 VL 模型与 LoRA 适配器
-- 加载 Processor（优先使用保存目录，其次使用模型自带）
-- 构建测试集，批量生成，解析 JSON，计算指标并出图落盘
+评估入口（优化版本）
+- 使用实验管理器统一管理模型加载
+- 简化模型保存和加载流程
+- 支持指定实验ID或使用最新实验
+- 统一的输出目录管理
 """
 
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any, Optional, Tuple
+from typing import Any, Optional
 
 import hydra
 from omegaconf import DictConfig
 
 import numpy as np
-import torch
 
 # ==== 项目内模块 ====
-from ..utils.io import build_output_paths, gen_run_name, save_json
-from ..core.loader import load_model_and_processor
+from ..utils.io import save_json, save_matplotlib_figure
 from ..data.builders import (
     DatasetBuildConfig,
     build_hfds_from_explicit,
@@ -31,29 +29,15 @@ from ..evaluation.generate import GenConfig, generate_for_dataset, extract_rul_v
 from ..evaluation.metrics import compute_regression_metrics_dict
 from ..evaluation.plotting import plot_series_comparison, plot_parity, plot_error_hist
 
-# 可选：Processor 加载封装
-try:
-    from ..utils.io import load_processor  # AutoProcessor 的封装
-except Exception:  # pragma: no cover
-    load_processor = None  # type: ignore
-
-# LoRA（PEFT）
-try:
-    from peft import PeftModel
-except Exception as e:  # pragma: no cover
-    PeftModel = None  # type: ignore
-    _PEFT_IMPORT_ERROR = e
-else:
-    _PEFT_IMPORT_ERROR = None
-
 
 def _cfg_get(cfg: DictConfig, dotted: str, default: Any = None) -> Any:
-    """从 DictConfig 里用点路径取值；不存在则返回 default。"""
-    cur: Any = cfg
-    for part in dotted.split("."):
-        if not isinstance(cur, (dict, DictConfig)) or part not in cur:
+    """从嵌套配置中安全获取值。"""
+    keys = dotted.split(".")
+    cur = cfg
+    for k in keys:
+        if not hasattr(cur, k):
             return default
-        cur = cur[part]
+        cur = getattr(cur, k)
     return cur
 
 
@@ -71,7 +55,6 @@ def _load_rules_text(rules_file: Optional[str]) -> str:
         return Path(rules_file).read_text(encoding="utf-8")
     # 项目根目录默认
     try:
-        # 获取项目根目录（当前工作目录的父目录）
         project_root = Path(__file__).parent.parent.parent.parent
         default_rules = project_root / "configs" / "base_rules.txt"
         return default_rules.read_text(encoding="utf-8")
@@ -81,68 +64,16 @@ def _load_rules_text(rules_file: Optional[str]) -> str:
         )
 
 
-# ===== 新增：latest_dir() 的 Python 等价实现 =====
-def _latest_subdir(parent: Path) -> Optional[str]:
-    """
-    返回 parent 目录下一层“最近修改时间”的子目录路径（字符串），若不存在返回 None。
-    """
-    if not parent.exists() or not parent.is_dir():
-        return None
-    # 仅考虑一级子目录
-    subdirs = [p for p in parent.iterdir() if p.is_dir()]
-    if not subdirs:
-        return None
-    latest = max(subdirs, key=lambda p: p.stat().st_mtime)
-    return str(latest.as_posix())
-
-
-def _maybe_auto_select_dirs(
-    lora_dir: Optional[str],
-    processor_dir: Optional[str],
-    outputs_root: str,
-) -> Tuple[str, Optional[str], dict]:
-    """
-    若 lora_dir / processor_dir 未显式提供或传 "latest"，
-    则从 outputs_root/{lora,processor} 下自动选择最近修改的子目录。
-    返回 (lora_dir, processor_dir, info)。
-    """
-    info = {"auto_lora": False, "auto_processor": False}
-
-    # LoRA：必须能解析出目录，否则报错
-    if lora_dir is None or str(lora_dir).strip().lower() == "latest":
-        auto = _latest_subdir(Path(outputs_root) / "lora")
-        if not auto:
-            raise ValueError(
-                f"未找到可用的 LoRA 目录。请显式设置 eval.lora_dir，或确保 {outputs_root}/lora/ 下存在子目录。"
-            )
-        lora_dir = auto
-        info["auto_lora"] = True
-
-    # Processor：可自动，也可回退到 base model 的 processor
-    if processor_dir is None or str(processor_dir).strip().lower() == "latest":
-        auto = _latest_subdir(Path(outputs_root) / "processor")
-        if auto:
-            processor_dir = auto
-            info["auto_processor"] = True
-        else:
-            # 不报错，后续将回退到 base model processor
-            processor_dir = None
-
-    # 规范化去尾斜杠
-    lora_dir = str(Path(lora_dir).as_posix())
-    if processor_dir is not None:
-        processor_dir = str(Path(processor_dir).as_posix())
-
-    return lora_dir, processor_dir, info
-
-
-@hydra.main(config_path="../../../configs", config_name="defaults", version_base="1.3")
+# ---------------- 主流程（Hydra） ----------------
+@hydra.main(config_path='../../../configs', config_name='defaults', version_base='1.3')
 def main(cfg: DictConfig) -> None:
     # ---- 读取关键配置 ----
-    model_id       = _cfg_get(cfg, "model.model_id", "Qwen/Qwen2.5-VL-3B-Instruct")
-    lora_dir       = _cfg_get(cfg, "eval.lora_dir", None)
-    processor_dir  = _cfg_get(cfg, "eval.processor_dir", None)
-    outputs_root   = _cfg_get(cfg, "paths.outputs_root", "outputs")
+    model_id = _cfg_get(cfg, "model.model_id", "Qwen/Qwen2.5-VL-3B-Instruct")
+    experiments_root = _cfg_get(cfg, "paths.experiments_root", "experiments")
+    
+    # 支持指定实验ID或使用最新实验
+    experiment_id = _cfg_get(cfg, "eval.experiment_id", None)
+    use_latest = _cfg_get(cfg, "eval.use_latest", True)
 
     test_dir_raw   = _cfg_get(cfg, "data.test_dir", None)
     data_root      = _cfg_get(cfg, "data.data_root", None)
@@ -159,50 +90,45 @@ def main(cfg: DictConfig) -> None:
     num_beams      = int(_cfg_get(cfg, "eval.num_beams", 1))
     rul_low        = float(_cfg_get(cfg, "eval.rul_low", 0.0))
     rul_high       = float(_cfg_get(cfg, "eval.rul_high", 150.0))
+    
+    # 样本数量限制（从图像化配置中读取）
+    test_max_samples = _cfg_get(cfg, "data.imgify.test.max_samples", None)
 
-    # ==== 新增：默认开启“latest”行为（显式传入优先） ====
-    lora_dir, processor_dir, _auto_info = _maybe_auto_select_dirs(lora_dir, processor_dir, outputs_root)
-    if _auto_info.get("auto_lora"):
-        print(f"[Auto] Using latest LoRA under '{outputs_root}/lora': {lora_dir}")
+    # ---- 创建实验管理器并选择实验 ----
+    from mmts.utils.experiment import get_experiment_manager
+    exp_manager = get_experiment_manager(experiments_root)
+    
+    if experiment_id:
+        try:
+            exp_info, exp_paths = exp_manager.load_experiment(experiment_id)
+            print(f"[Experiment] 使用指定实验: {experiment_id}")
+        except FileNotFoundError:
+            print(f"[Error] 实验不存在: {experiment_id}")
+            return
+    elif use_latest:
+        latest = exp_manager.get_latest_experiment()
+        if latest is None:
+            print(f"[Error] 没有找到任何实验，请先训练模型")
+            return
+        exp_info, exp_paths = latest
+        print(f"[Experiment] 使用最新实验: {exp_info.experiment_id}")
     else:
-        print(f"[Info] Using provided LoRA dir: {lora_dir}")
-    if _auto_info.get("auto_processor"):
-        print(f"[Auto] Using latest Processor under '{outputs_root}/processor': {processor_dir}")
-    else:
-        print(f"[Info] Processor dir: {processor_dir or '<none - will use base model processor>'}")
+        print(f"[Error] 请指定 experiment_id 或设置 use_latest=true")
+        return
+    
+    print(f"[Experiment] 实验目录: {exp_paths.root}")
 
     # ---- 规则文本 ----
     rules = _load_rules_text(rules_file)
 
-    # ---- 输出目录（本次评估专属 run）---
-    run_name = gen_run_name("eval")
-    paths = build_output_paths(root=outputs_root, with_run=False)
-
-    # ---- 加载基础模型 + Processor ----
-    print(f"[Info] Loading base model: {model_id}")
-    base_model, proc_from_model = load_model_and_processor(
-        model_id=model_id,
-        trust_remote_code=True,
-        use_fast_tokenizer=False,
+    # ---- 加载统一模型（LoRA + Processor） ----
+    from mmts.utils.io import load_unified_model
+    print(f"[Info] Loading unified model from: {exp_paths.models}")
+    model, processor = load_unified_model(
+        model_dir=exp_paths.models,
+        base_model_id=model_id,
+        trust_remote_code=True
     )
-
-    if processor_dir:
-        if load_processor is None:
-            raise ImportError("缺少 Processor 加载工具或 transformers 未安装。")
-        print(f"[Info] Loading processor from: {processor_dir}")
-        processor = load_processor(processor_dir)
-    else:
-        processor = proc_from_model
-        print("[Info] Using processor from base model.")
-
-    # ---- 注入 LoRA ----
-    if PeftModel is None:
-        raise ImportError(
-            "未检测到 `peft` 库，请先安装：\n  pip install -U peft\n\n"
-            f"原始导入错误：{_PEFT_IMPORT_ERROR!r}"
-        )
-    print(f"[Info] Loading LoRA adapter from: {lora_dir}")
-    model = PeftModel.from_pretrained(base_model, lora_dir)
 
     # ---- 构建测试集 ----
     ds_cfg = DatasetBuildConfig(
@@ -236,66 +162,66 @@ def main(cfg: DictConfig) -> None:
     else:
         raise ValueError("请在配置中提供 data.test_dir 或 data.data_root。")
 
+    # ---- 应用测试样本数量限制 ----
+    if test_max_samples is not None and len(test_hf) > test_max_samples:
+        print(f"[Info] 限制测试样本数量: {len(test_hf)} -> {test_max_samples}")
+        test_hf = test_hf.select(range(test_max_samples))
+
     # ---- 批量推理 ----
     gen_cfg = GenConfig(
-        image_size=image_size,
         max_new_tokens=max_new_tokens,
-        do_sample=bool(do_sample),
-        num_beams=int(num_beams),
-    )
-    print("[Eval] Generating predictions on test set...")
-    raw_texts, json_texts, json_objs = generate_for_dataset(
-        model=model,
-        processor=processor,
-        dataset=test_hf,
-        rules=rules,
-        gen=gen_cfg,
-        setup_infer=True,
+        do_sample=do_sample,
+        num_beams=num_beams,
+        temperature=1.0,
+        top_p=1.0,
     )
 
-    # ---- 抽取数值并裁剪 ----
-    y_true = np.asarray([float(test_hf[i]["y"]) for i in range(len(test_hf))], dtype=np.float32)
-    y_pred, reasons = extract_rul_values(
-        json_objs=json_objs,
-        low=float(rul_low),
-        high=float(rul_high),
-        reason_key="reason",
-    )
+    print(f"[Generate] 开始批量推理，样本数: {len(test_hf)}")
+    raw_texts, json_texts, json_objs = generate_for_dataset(model, processor, test_hf, rules, gen_cfg)
+    print(f"[Generate] 推理完成")
 
-    # ---- 指标 ----
-    metrics = compute_regression_metrics_dict(y_true, y_pred)
-    print(f"[Eval] RMSE={metrics['rmse']:.3f} | MAE={metrics['mae']:.3f} | "
-          f"R2={metrics['r2']:.3f} | valid={metrics['valid_ratio']*100:.1f}% "
-          f"(n={int(metrics['n_valid'])}/{int(metrics['n_total'])})")
+    # ---- 解析 RUL 值 ----
+    print("[Parse] 解析 RUL 值...")
+    rul_pred, reasons = extract_rul_values(json_objs, low=rul_low, high=rul_high)
+    rul_true = np.array([item["y"] for item in test_hf])
 
-    # ---- 落盘 ----
-    metrics_path = paths.logs / f"metrics_{run_name}.json"
-    save_json(metrics, metrics_path)
-    print(f"[Save] Metrics saved to: {metrics_path}")
+    # ---- 计算指标 ----
+    print("[Metrics] 计算评估指标...")
+    metrics = compute_regression_metrics_dict(rul_true, rul_pred)
+    
+    # 打印指标
+    print("\n=== 评估结果 ===")
+    for name, value in metrics.items():
+        print(f"{name}: {value:.4f}")
 
-    print("[Eval] Saving figures...")
-    fig_series_path = paths.figures / f"series_{run_name}.png"
-    fig_parity_path = paths.figures / f"parity_{run_name}.png"
-    fig_hist_path   = paths.figures / f"errors_{run_name}.png"
+    # ---- 保存结果 ----
+    # 保存指标
+    metrics_file = exp_paths.logs / f"metrics_eval_{exp_info.experiment_id}.json"
+    save_json(metrics, metrics_file)
+    print(f"[Save] 指标已保存到: {metrics_file}")
 
-    plot_series_comparison(
-        y_true, y_pred,
-        first_n=min(200, len(y_true)),
-        title=f"Test RUL Prediction | RMSE={metrics['rmse']:.2f}",
-        out_path=fig_series_path,
-    )
-    plot_parity(
-        y_true, y_pred,
-        title="Parity Plot (Test)",
-        out_path=fig_parity_path,
-    )
-    plot_error_hist(
-        y_true, y_pred,
-        title="Error Distribution (pred - true)",
-        out_path=fig_hist_path,
-    )
-    print(f"[Save] Figures ->\n  {fig_series_path}\n  {fig_parity_path}\n  {fig_hist_path}")
-    print("[Eval] Done.")
+    # ---- 生成图表 ----
+    print("[Plot] 生成评估图表...")
+    
+    # 时间序列对比图
+    fig1 = plot_series_comparison(rul_true, rul_pred, title="RUL Prediction Comparison")
+    fig1_path = exp_paths.figures / f"predictions_eval_{exp_info.experiment_id}.png"
+    save_matplotlib_figure(fig1, fig1_path)
+    print(f"[Plot] 时间序列对比图: {fig1_path}")
+
+    # 散点图
+    fig2 = plot_parity(rul_true, rul_pred, title="RUL Prediction Scatter")
+    fig2_path = exp_paths.figures / f"parity_eval_{exp_info.experiment_id}.png"
+    save_matplotlib_figure(fig2, fig2_path)
+    print(f"[Plot] 散点图: {fig2_path}")
+
+    # 误差分布图
+    fig3 = plot_error_hist(rul_true, rul_pred, title="RUL Prediction Error Distribution")
+    fig3_path = exp_paths.figures / f"error_hist_eval_{exp_info.experiment_id}.png"
+    save_matplotlib_figure(fig3, fig3_path)
+    print(f"[Plot] 误差分布图: {fig3_path}")
+
+    print(f"\n[Complete] 评估完成！结果保存在: {exp_paths.root}")
 
 
 if __name__ == "__main__":

@@ -3,22 +3,13 @@
 
 set -euo pipefail
 
-GPU_ID="${GPU_ID:-0}"
+GPU_ID="${GPU_ID:-3}"
 export CUDA_VISIBLE_DEVICES="${GPU_ID}"
 
-LOG_DIR="logs"
-mkdir -p "${LOG_DIR}"
-
-ts() { date +"%Y-%m-%d_%H-%M-%S"; }
-RUN_ID="imgify_$(ts)"
-LOG_FILE="${LOG_DIR}/${RUN_ID}.log"
-
 echo "[图像化] 使用 GPU=${CUDA_VISIBLE_DEVICES}"
-echo "[图像化] 日志文件=${LOG_FILE}"
+echo "[图像化] 开始图像化处理..."
 
+# 直接运行图像化，Hydra已禁用自动输出目录
+python -u -m mmts.cli.imgify "$@"
 
-nohup python -u -m mmts.cli.imgify "$@" > "${LOG_FILE}" 2>&1 &
-PID=$!
-
-echo "[图像化] 启动进程 PID=${PID}"
-echo "查看日志：tail -f ${LOG_FILE}"
+echo "[图像化] 图像化完成！"
