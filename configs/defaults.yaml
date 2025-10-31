@@ -15,16 +15,26 @@ lora:
   alpha: 32
   dropout: 0.05
   bias: "none"
+  # 图像encoder部分使用LoRA训练
+  # PEFT使用字符串包含匹配：匹配模块名称中包含指定字符串的Linear层
+  # 根据模型结构检查（只匹配视觉encoder独有的层，避免匹配LLM部分）：
+  # - qkv: 视觉encoder独有（LLM使用q_proj/k_proj/v_proj分开的）
+  # - attn.proj: 视觉encoder的attention输出投影（LLM使用self_attn.o_proj，不会匹配）
+  # 注意：gate_proj, up_proj, down_proj在视觉和LLM中都存在，暂时不训练MLP层避免冲突
   target_modules:
-    - self_attn.q_proj
-    - self_attn.k_proj
-    - self_attn.v_proj
-    - self_attn.o_proj
-    - mlp.gate_proj
-    - mlp.up_proj
-    - mlp.down_proj
+    - qkv       # 视觉encoder独有的qkv线性层（匹配model.visual.blocks.*.attn.qkv）
+    - attn.proj # 视觉encoder的attention输出投影（匹配model.visual.blocks.*.attn.proj）
+  # LLM主体部分的layer norm和输出头直接训练（不使用LoRA）
+  # modules_to_save中的模块会被完整保存和训练，不使用LoRA
+  # 根据模型结构检查：
+  # - LLM的layer norm路径：model.language_model.layers.*.input_layernorm / post_attention_layernorm
+  # - 视觉encoder使用norm1/norm2（Qwen2RMSNorm），不会冲突
+  # - 顶层norm: model.language_model.norm
   modules_to_save:
-    - lm_head
+    - lm_head                    # 输出头直接训练
+    - input_layernorm            # LLM的input layer norm（只匹配LLM部分，视觉encoder使用norm1/norm2）
+    - post_attention_layernorm  # LLM的post attention layer norm
+    - language_model.norm       # LLM顶层norm（避免匹配到视觉encoder的norm）
 
 data:
   name: FD001
@@ -53,7 +63,7 @@ data:
 
   # === 图像化配置（mmts.cli.imgify） ===
   imgify:
-    force_regenerate: false   # 是否强制重新生成图像（默认关闭）
+    force_regenerate: true   # 是否强制重新生成图像（默认关闭）
     renderer: grayscale
     orientation: row-major
     flip_vertical: false
@@ -72,13 +82,13 @@ data:
       x_npy: data/processed/FD001/X_train.npy
       y_npy: data/processed/FD001/y_train.npy
       out_dir: data/images/FD001/train
-      max_samples: 100
+      max_samples: null
 
     test:
       x_npy: data/processed/FD001/X_test.npy
       y_npy: data/processed/FD001/y_test.npy
       out_dir: data/images/FD001/test
-      max_samples: 10
+      max_samples: null
   # =======================================
 
 train:

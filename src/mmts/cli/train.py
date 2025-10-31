@@ -111,6 +111,8 @@ def main(cfg: DictConfig) -> None:
     lora_r         = int(_cfg_get(cfg, "lora.r", 16))
     lora_alpha     = int(_cfg_get(cfg, "lora.alpha", 32))
     lora_dropout   = float(_cfg_get(cfg, "lora.dropout", 0.05))
+    lora_target_modules = _cfg_get(cfg, "lora.target_modules", None)
+    lora_modules_to_save = _cfg_get(cfg, "lora.modules_to_save", None)
 
     # 训练超参
     epochs         = int(_cfg_get(cfg, "train.epochs", 10))
@@ -175,14 +177,18 @@ def main(cfg: DictConfig) -> None:
     )
 
     # ---- 注入 LoRA ----
+    # PEFT会自动处理参数冻结：
+    # - target_modules中的模块：会用LoRA包装，LoRA参数可训练，原始参数自动冻结
+    # - modules_to_save中的模块：完整保存和训练（不使用LoRA），参数可训练
+    # - 其他所有参数：自动冻结
     lora_params = LoRAParams(
         r=lora_r,
         alpha=lora_alpha,
         dropout=lora_dropout,
         bias="none",
         task_type="CAUSAL_LM",
-        target_modules=None,
-        modules_to_save=None,
+        target_modules=lora_target_modules,
+        modules_to_save=lora_modules_to_save,
     )
     model = attach_lora(model, lora_params, verbose=True)
 
