@@ -11,6 +11,7 @@ from typing import Dict, List, Optional, Tuple
 import numpy as np
 import torch
 from datasets import Dataset as HFDataset
+from tqdm import tqdm
 
 from .datasets import ImageJsonNumberSFTDataset, NumberSupervisionSpec
 
@@ -26,9 +27,12 @@ class DatasetBuildConfig:
     supervision: Optional[NumberSupervisionSpec] = None
 
 
-def _torchds_to_hfds(torch_ds: ImageJsonNumberSFTDataset) -> HFDataset:
+def _torchds_to_hfds(torch_ds: ImageJsonNumberSFTDataset, split: str = "dataset") -> HFDataset:
     """逐条 materialize 到 list，再构建 HFDataset。"""
-    records: List[Dict] = [torch_ds[i] for i in range(len(torch_ds))]
+    total = len(torch_ds)
+    records: List[Dict] = []
+    for i in tqdm(range(total), desc=f"加载{split}数据", unit="样本"):
+        records.append(torch_ds[i])
     return HFDataset.from_list(records)
 
 
@@ -98,11 +102,15 @@ def build_hfds_from_single_root(
     tr_idx = idx[:n_tr]
     te_idx = idx[n_tr:]
 
-    def _subset_to_list(ds: ImageJsonNumberSFTDataset, indices: np.ndarray) -> List[Dict]:
-        return [ds[int(i)] for i in indices]
+    def _subset_to_list(ds: ImageJsonNumberSFTDataset, indices: np.ndarray, desc: str = "加载数据") -> List[Dict]:
+        """将数据集子集转换为列表，带进度条。"""
+        records: List[Dict] = []
+        for i in tqdm(indices, desc=desc, unit="样本"):
+            records.append(ds[int(i)])
+        return records
 
-    train_list = _subset_to_list(base, tr_idx)
-    test_list = _subset_to_list(base, te_idx)
+    train_list = _subset_to_list(base, tr_idx, desc="加载训练数据")
+    test_list = _subset_to_list(base, te_idx, desc="加载测试数据")
 
     return HFDataset.from_list(train_list), HFDataset.from_list(test_list)
 
